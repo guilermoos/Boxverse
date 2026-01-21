@@ -1,6 +1,6 @@
 # Makefile para compilar o Boxverse
 CC = gcc
-CFLAGS = -Wall -Wextra -D_GNU_SOURCE
+CFLAGS = -Wall -Wextra -D_GNU_SOURCE -static
 HOST_TARGET = boxverse
 GUEST_TARGET = boxverse-init
 
@@ -22,35 +22,58 @@ GUEST_SRCS = $(SRC_DIR)/guest_init.c
 
 HOST_OBJS = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(HOST_SRCS))
 
-all: $(HOST_TARGET) $(GUEST_TARGET)
+# Declaração de alvos que não são arquivos
+.PHONY: help here install uninstall clean
+
+# --- ALVO PADRÃO (Help) ---
+# Executado quando se digita apenas 'make'
+help:
+	@echo ""
+	@echo "  \033[1;34m📦 Boxverse Build System\033[0m"
+	@echo "  -----------------------"
+	@echo "  Por favor, escolha uma opção:"
+	@echo ""
+	@echo "  \033[1;32msudo make here\033[0m       Compila o projeto localmente (no diretório atual)."
+	@echo "  \033[1;32msudo make install\033[0m    Compila e instala os binários em $(BINDIR)."
+	@echo "  \033[1;33msudo make uninstall\033[0m  Remove os binários do sistema."
+	@echo "  \033[1;31msudo make clean\033[0m      Remove arquivos objetos e executáveis locais."
+	@echo ""
+
+# --- COMPILAÇÃO LOCAL (Make Here) ---
+here: $(HOST_TARGET) $(GUEST_TARGET)
+	@echo "\n✅ \033[1;32mCompilação concluída!\033[0m"
+	@echo "Binários gerados: './$(HOST_TARGET)' e './$(GUEST_TARGET)'"
 
 # Compila CLI do Host
 $(HOST_TARGET): $(HOST_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^
 
-# Compila Init do Guest (Estático obrigatório)
+# Compila Init do Guest (Estático)
 $(GUEST_TARGET): $(GUEST_SRCS)
-	$(CC) $(CFLAGS) -static -o $@ $<
+	$(CC) $(CFLAGS) -o $@ $<
 
+# Regra genérica para objetos
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OBJ_DIR):
 	mkdir -p $(OBJ_DIR)
 
-# --- Instalação ---
-install: all
+# --- INSTALAÇÃO ---
+install: here
 	@echo "Instalando binários em $(BINDIR)..."
 	@install -m 755 $(HOST_TARGET) $(BINDIR)/$(HOST_TARGET)
 	@install -m 755 $(GUEST_TARGET) $(BINDIR)/$(GUEST_TARGET)
-	@echo "Instalação concluída! Agora você pode rodar 'boxverse' de qualquer lugar."
+	@echo "✅ Instalação concluída! Agora você pode rodar 'boxverse' de qualquer lugar."
 
+# --- DESINSTALAÇÃO ---
 uninstall:
 	@echo "Removendo binários..."
 	@rm -f $(BINDIR)/$(HOST_TARGET)
 	@rm -f $(BINDIR)/$(GUEST_TARGET)
-	@echo "Desinstalado."
+	@echo "Desinstalado com sucesso."
 
+# --- LIMPEZA ---
 clean:
 	rm -rf $(OBJ_DIR) $(HOST_TARGET) $(GUEST_TARGET)
-	@echo "Limpeza concluída com sucesso!"
+	@echo "Limpeza concluída!"
