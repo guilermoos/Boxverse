@@ -1,15 +1,11 @@
 #include "common.h"
 #include <limits.h>
 
-// Versão do Alpine para download
-#define ALPINE_VERSION "3.21.0"
-#define ALPINE_MAJOR "v3.21"
-#define ARCH "x86_64" 
+// URLs das imagens hospedadas no GitHub Releases
+#define URL_ALPINE "https://github.com/guilermoos/Boxverse/releases/download/images/alpine.tar.xz"
+#define URL_UBUNTU_NOBLE "https://github.com/guilermoos/Boxverse/releases/download/images/ubuntu-noble.tar.xz"
 
-// URL base para o Alpine Mini Root Filesystem
-// Ex: https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/x86_64/alpine-minirootfs-3.21.0-x86_64.tar.gz
-
-// Função interna para localizar o binário do init (mantida igual)
+// Função interna para localizar o binário do init
 static char* find_guest_init() {
     static char path[PATH_MAX];
     
@@ -35,94 +31,49 @@ static char* find_guest_init() {
     return NULL;
 }
 
-// Configura sources.list para Ubuntu/Debian
-static void configure_debian_sources(const char *distro) {
-    char path[256];
-    snprintf(path, sizeof(path), "%s/etc/apt/sources.list", ROOTFS_DIR);
-
-    FILE *f = fopen(path, "w");
-    if (!f) return;
-
-    // Detecta se é Debian ou Ubuntu baseado no nome da distro (simplificado)
-    // Se for 'stable', 'bookworm', etc assume Debian. Se 'noble', 'jammy', assume Ubuntu.
-    // Como padrão assumiremos estrutura Ubuntu, mas para 'alpine' essa função nem é chamada.
-    
-    const char *archive_url = "http://archive.ubuntu.com/ubuntu/";
-    const char *security_url = "http://security.ubuntu.com/ubuntu/";
-    fprintf(f, "deb %s %s main restricted universe multiverse\n", archive_url, distro);
-    fprintf(f, "deb %s %s-updates main restricted universe multiverse\n", archive_url, distro);
-    fprintf(f, "deb %s %s-security main restricted universe multiverse\n", security_url, distro);
-
-    fclose(f);
-}
-
-// --- INSTALAÇÃO DEBIAN/UBUNTU (Via debootstrap) ---
-static int install_debian(const char *distro) {
+// Função genérica para baixar, extrair e limpar a imagem
+static int download_and_extract(const char *url, const char *distro_name) {
     char cmd[1024];
-    log_info("Detectado sistema base Debian/Ubuntu. Usando debootstrap...");
+    char tarball_path[256];
     
-    // Verifica se debootstrap existe
-    if (system("which debootstrap > /dev/null 2>&1") != 0) {
-        log_error("Erro: 'debootstrap' não instalado.");
-        log_error("Instale com: sudo apt-get install debootstrap");
-        return 1;
-    }
+    // Define nome temporário do arquivo
+    snprintf(tarball_path, sizeof(tarball_path), "%s_image.tar.xz", distro_name);
 
-    snprintf(cmd, sizeof(cmd), "debootstrap --components=main,universe,multiverse %s %s", distro, ROOTFS_DIR);
-    
-    if (system(cmd) != 0) {
-        log_error("Falha no debootstrap.");
-        return 1;
-    }
-
-    configure_debian_sources(distro);
-    return 0;
-}
-
-// --- INSTALAÇÃO ALPINE (Via Tarball) ---
-static int install_alpine(void) {
-    char url[512];
-    char cmd[1024];
-    char tarball_path[] = "alpine-rootfs.tar.gz";
-
-    log_info("Detectado Alpine Linux. Baixando Mini Root Filesystem...");
-
-    // Constrói URL
-    snprintf(url, sizeof(url), 
-             "https://dl-cdn.alpinelinux.org/alpine/%s/releases/%s/alpine-minirootfs-%s-%s.tar.gz",
-             ALPINE_MAJOR, ARCH, ALPINE_VERSION, ARCH);
-
+    log_info("Baixando imagem base para %s...", distro_name);
     log_info("URL: %s", url);
 
-    // Tenta baixar com wget ou curl
+    // 1. Download (Tenta wget, fallback para curl)
     if (system("which wget > /dev/null 2>&1") == 0) {
-        snprintf(cmd, sizeof(cmd), "wget -q -O %s %s", tarball_path, url);
+        snprintf(cmd, sizeof(cmd), "wget -q --show-progress -O %s %s", tarball_path, url);
     } else if (system("which curl > /dev/null 2>&1") == 0) {
         snprintf(cmd, sizeof(cmd), "curl -L -o %s %s", tarball_path, url);
     } else {
-        log_error("Erro: Nem 'wget' nem 'curl' encontrados para baixar o rootfs.");
+        log_error("Erro: É necessário ter 'wget' ou 'curl' instalado para baixar a imagem.");
         return 1;
     }
 
     if (system(cmd) != 0) {
-        log_error("Falha ao baixar o Alpine rootfs.");
+        log_error("Falha no download. Verifique sua conexão ou a URL.");
+        unlink(tarball_path);
         return 1;
     }
 
+    // 2. Extração
     log_info("Extraindo sistema de arquivos...");
-    snprintf(cmd, sizeof(cmd), "tar -xzf %s -C %s", tarball_path, ROOTFS_DIR);
+    // A flag 'J' é para .xz
+    snprintf(cmd, sizeof(cmd), "tar -xJf %s -C %s", tarball_path, ROOTFS_DIR);
     
     if (system(cmd) != 0) {
-        log_error("Falha ao extrair o tarball.");
-        unlink(tarball_path); // Limpa
+        log_error("Falha ao extrair o arquivo. O download pode estar corrompido.");
+        unlink(tarball_path); // Limpa o arquivo corrompido
         return 1;
     }
 
-    unlink(tarball_path); // Remove o arquivo baixado
-
-    // Configuração de DNS inicial (o guest_init reescreve, mas é bom garantir)
-    snprintf(cmd, sizeof(cmd), "echo 'nameserver 8.8.8.8' > %s/etc/resolv.conf", ROOTFS_DIR);
-    system(cmd);
+    // 3. Limpeza (Deleta o arquivo baixado)
+    log_info("Limpando arquivos temporários...");
+    if (unlink(tarball_path) != 0) {
+        log_error("Aviso: Não foi possível deletar o arquivo temporário %s", tarball_path);
+    }
 
     return 0;
 }
@@ -135,9 +86,9 @@ int cmd_init(int argc, char **argv) {
 
     if (argc < 3) {
         log_error("Uso: boxverse init <distro> [--net] [--ssh]");
-        log_error("Exemplos: ");
-        log_error("  boxverse init noble    (Ubuntu 24.04)");
-        log_error("  boxverse init alpine   (Alpine Linux %s)", ALPINE_MAJOR);
+        log_error("Distros disponíveis:");
+        log_error("  alpine   (Alpine Linux - Super Leve)");
+        log_error("  noble    (Ubuntu 24.04 LTS)");
         return 1;
     }
 
@@ -145,6 +96,7 @@ int cmd_init(int argc, char **argv) {
     Config cfg = {0};
     strncpy(cfg.distro, distro, sizeof(cfg.distro) - 1);
 
+    // Parse flags
     for (int i = 3; i < argc; i++) {
         if (strcmp(argv[i], "--net") == 0) cfg.net_enabled = true;
         if (strcmp(argv[i], "--ssh") == 0) cfg.ssh_enabled = true;
@@ -157,56 +109,65 @@ int cmd_init(int argc, char **argv) {
         return 1;
     }
 
-    log_info("Inicializando ambiente...");
+    log_info("Inicializando ambiente Boxverse...");
     
     // Cria diretórios base
     if (mkdir(BOX_DIR, 0755) != 0 && errno != EEXIST) { perror("mkdir .boxverse"); return 1; }
     if (mkdir(ROOTFS_DIR, 0755) != 0 && errno != EEXIST) { perror("mkdir rootfs"); return 1; }
 
-    // SELEÇÃO DA ESTRATÉGIA DE INSTALAÇÃO
-    int ret = 0;
+    // Roteamento de Distros (Agora todas usam download)
+    int ret = 1;
     if (strcmp(distro, "alpine") == 0) {
-        ret = install_alpine();
-    } else {
-        ret = install_debian(distro);
-    }
-
-    if (ret != 0) {
-        // Limpeza em caso de falha
+        ret = download_and_extract(URL_ALPINE, "alpine");
+    } 
+    else if (strcmp(distro, "noble") == 0) {
+        ret = download_and_extract(URL_UBUNTU_NOBLE, "noble");
+    } 
+    else {
+        log_error("Distro '%s' desconhecida.", distro);
+        log_error("Use 'alpine' ou 'noble'.");
         system("rm -rf .boxverse rootfs");
         return 1;
     }
 
-    // Instalação do Binário do Guest
+    if (ret != 0) {
+        // Se falhou, limpa as pastas criadas
+        system("rm -rf .boxverse rootfs");
+        return 1;
+    }
+
+    // Instalação do Binário do Guest (Init System)
     log_info("Instalando Init System do Boxverse...");
     
     char cmd[1024];
-    // No Alpine, /sbin existe e é o local padrão.
-    // No Debian/Ubuntu moderno, /sbin é link para /usr/sbin ou existe.
+    // Garante que a pasta sbin exista (Alpine e Ubuntu usam estruturas diferentes as vezes)
+    snprintf(cmd, sizeof(cmd), "mkdir -p %s/sbin", ROOTFS_DIR);
+    system(cmd);
+
     snprintf(cmd, sizeof(cmd), "cp %s %s/sbin/boxverse-init", guest_bin, ROOTFS_DIR);
-    
     if (system(cmd) != 0) {
-        // Fallback: Tenta criar pasta se não existir (algumas distros minimalistas podem variar)
-        snprintf(cmd, sizeof(cmd), "mkdir -p %s/sbin", ROOTFS_DIR);
-        system(cmd);
-        snprintf(cmd, sizeof(cmd), "cp %s %s/sbin/boxverse-init", guest_bin, ROOTFS_DIR);
-        
-        if (system(cmd) != 0) {
-            log_error("Falha ao copiar boxverse-init para rootfs.");
-            return 1;
-        }
+        log_error("Falha ao copiar boxverse-init para rootfs.");
+        return 1;
     }
     
     snprintf(cmd, sizeof(cmd), "chmod +x %s/sbin/boxverse-init", ROOTFS_DIR);
     system(cmd);
 
+    // Configuração básica de DNS para garantir conectividade imediata
+    snprintf(cmd, sizeof(cmd), "echo 'nameserver 8.8.8.8' > %s/etc/resolv.conf", ROOTFS_DIR);
+    system(cmd);
+
     save_config(&cfg);
     set_state(STATE_INITIALIZED);
 
-    log_info("Instalação concluída!");
+    log_info("Instalação concluída com sucesso!");
     log_info("Distro: %s", distro);
+    
     if (strcmp(distro, "alpine") == 0) {
-        log_info("Dica: No Alpine, use 'apk add' em vez de 'apt-get'.");
+        log_info("Dica: No Alpine use 'apk' para gerenciar pacotes.");
+    } else {
+        log_info("Dica: No Ubuntu use 'apt' para gerenciar pacotes.");
     }
+    
     return 0;
 }

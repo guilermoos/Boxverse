@@ -40,7 +40,7 @@ help:
 
 # --- COMPILAÇÃO LOCAL (Make Here) ---
 here: $(HOST_TARGET) $(GUEST_TARGET)
-	@echo "\n✅ \033[1;32mCompilação concluída!\033[0m"
+	@echo "\n\033[1;32mCompilação concluída!\033[0m"
 	@echo "Binários gerados: './$(HOST_TARGET)' e './$(GUEST_TARGET)'"
 
 # Compila CLI do Host
@@ -64,7 +64,7 @@ install: here
 	@echo "Instalando binários em $(BINDIR)..."
 	@install -m 755 $(HOST_TARGET) $(BINDIR)/$(HOST_TARGET)
 	@install -m 755 $(GUEST_TARGET) $(BINDIR)/$(GUEST_TARGET)
-	@echo "✅ Instalação concluída! Pode rodar 'boxverse'."
+	@echo "Instalação concluída! Pode rodar 'boxverse'."
 
 # --- DESINSTALAÇÃO ---
 uninstall:
