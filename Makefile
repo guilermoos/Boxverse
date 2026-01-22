@@ -11,14 +11,14 @@ BINDIR = $(PREFIX)/bin
 SRC_DIR = src
 OBJ_DIR = obj
 
-# Fontes do Host (CLI)
+# Fontes do Host (CLI) - Adicionado ipc.c
 HOST_SRCS = $(SRC_DIR)/main.c $(SRC_DIR)/init.c $(SRC_DIR)/start.c \
             $(SRC_DIR)/exec.c $(SRC_DIR)/end.c $(SRC_DIR)/destroy.c \
             $(SRC_DIR)/mounts.c $(SRC_DIR)/cgroup.c $(SRC_DIR)/network.c \
-            $(SRC_DIR)/util.c
+            $(SRC_DIR)/util.c $(SRC_DIR)/ipc.c
 
-# Fontes do Guest (Init interno)
-GUEST_SRCS = $(SRC_DIR)/guest_init.c
+# Fontes do Guest (Init interno) - Adicionado ipc.c
+GUEST_SRCS = $(SRC_DIR)/guest_init.c $(SRC_DIR)/ipc.c
 
 HOST_OBJS = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(HOST_SRCS))
 
@@ -26,17 +26,16 @@ HOST_OBJS = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(HOST_SRCS))
 .PHONY: help here install uninstall clean
 
 # --- ALVO PADRÃO (Help) ---
-# Executado quando se digita apenas 'make'
 help:
 	@echo ""
-	@echo "  \033[1;34m📦 Boxverse Build System\033[0m"
+	@echo "  \033[1;34m Boxverse Build System\033[0m"
 	@echo "  -----------------------"
 	@echo "  Por favor, escolha uma opção:"
 	@echo ""
-	@echo "  \033[1;32msudo make here\033[0m       Compila o projeto localmente (no diretório atual)."
-	@echo "  \033[1;32msudo make install\033[0m    Compila e instala os binários em $(BINDIR)."
-	@echo "  \033[1;33msudo make uninstall\033[0m  Remove os binários do sistema."
-	@echo "  \033[1;31msudo make clean\033[0m      Remove arquivos objetos e executáveis locais."
+	@echo "  \033[1;32msudo make here\033[0m       Compila o projeto localmente."
+	@echo "  \033[1;32msudo make install\033[0m    Compila e instala em $(BINDIR)."
+	@echo "  \033[1;33msudo make uninstall\033[0m  Remove os binários."
+	@echo "  \033[1;31msudo make clean\033[0m      Limpa arquivos temporários."
 	@echo ""
 
 # --- COMPILAÇÃO LOCAL (Make Here) ---
@@ -49,8 +48,9 @@ $(HOST_TARGET): $(HOST_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^
 
 # Compila Init do Guest (Estático)
+# Nota: Usamos $^ para incluir tanto guest_init.c quanto ipc.c
 $(GUEST_TARGET): $(GUEST_SRCS)
-	$(CC) $(CFLAGS) -o $@ $<
+	$(CC) $(CFLAGS) -o $@ $^
 
 # Regra genérica para objetos
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
@@ -64,7 +64,7 @@ install: here
 	@echo "Instalando binários em $(BINDIR)..."
 	@install -m 755 $(HOST_TARGET) $(BINDIR)/$(HOST_TARGET)
 	@install -m 755 $(GUEST_TARGET) $(BINDIR)/$(GUEST_TARGET)
-	@echo "✅ Instalação concluída! Agora você pode rodar 'boxverse' de qualquer lugar."
+	@echo "✅ Instalação concluída! Pode rodar 'boxverse'."
 
 # --- DESINSTALAÇÃO ---
 uninstall:

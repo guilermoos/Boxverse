@@ -1,15 +1,19 @@
+// src/guest_init.c
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
-#include <sys/socket.h>
-#include <sys/un.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
-#include <errno.h>
+#include <string.h>
+#include <fcntl.h>
+// Incluímos o common.h para ter acesso às funções IPC
+#include "common.h"
 
-#define SOCKET_PATH "/.boxverse/control.sock"
-#define MAX_CLIENTS 5
+// Redefinimos apenas o que o guest precisa se não quisermos linkar util.c inteiro
+// Mas para simplificar, usaremos as definicoes do common.h
+
+#define MAX_CLIENTS 10
 
 volatile int keep_running = 1;
 
@@ -22,12 +26,51 @@ void reap_zombies() {
     while (waitpid(-1, NULL, WNOHANG) > 0);
 }
 
-// Protocolo:
-// 1. Recebe comando: "EXEC <cmd>" ou "SHUTDOWN"
-// 2. EXEC: Fork -> Exec -> Wait -> Send Return Code
-// 3. SHUTDOWN: Set running=0 -> Send "OK"
+int interface_exists(const char *ifname) {
+    char path[128];
+    snprintf(path, sizeof(path), "/sys/class/net/%s", ifname);
+    return access(path, F_OK) == 0;
+}
+
+void setup_guest_network() {
+    int logfd = open("/dev/null", O_WRONLY);
+    if (logfd >= 0) {
+        dup2(logfd, STDOUT_FILENO);
+        dup2(logfd, STDERR_FILENO);
+    }
+
+    system("ip link set lo up");
+
+    if (interface_exists("veth1")) system("ip link set veth1 name eth0");
+
+    if (interface_exists("eth0")) {
+        system("ip addr add 10.10.10.2/24 dev eth0");
+        system("ip link set eth0 up");
+        system("ip route add default via 10.10.10.1");
+    } 
+
+    unlink("/etc/resolv.conf");
+    FILE *f = fopen("/etc/resolv.conf", "w");
+    if (f) {
+        fprintf(f, "nameserver 8.8.8.8\n");
+        fprintf(f, "nameserver 1.1.1.1\n");
+        fclose(f);
+    }
+    if (logfd >= 0) close(logfd);
+}
+
+void wait_and_configure_network() {
+    for (int i = 0; i < 30; i++) {
+        if (interface_exists("veth1") || interface_exists("eth0")) {
+            setup_guest_network();
+            return;
+        }
+        usleep(100000);
+    }
+}
+
 void handle_client(int client_fd) {
-    char buf[1024];
+    char buf[4096];
     int len = read(client_fd, buf, sizeof(buf) - 1);
     if (len <= 0) return;
     buf[len] = '\0';
@@ -41,52 +84,32 @@ void handle_client(int client_fd) {
         pid_t pid = fork();
 
         if (pid == 0) {
-            // Filho: executa comando
-            // Redireciona stdout/stderr se necessário (aqui herdando do init que não tem tty)
-            // Em produção, redirecionaria para socket ou log
+            dup2(client_fd, STDOUT_FILENO);
+            dup2(client_fd, STDERR_FILENO);
+            close(client_fd);
             execl("/bin/sh", "sh", "-c", cmd, NULL);
-            exit(127); // Erro se execl falhar
-        } else if (pid > 0) {
-            // Pai (Init): espera comando terminar para retornar status
-            int status;
-            waitpid(pid, &status, 0);
-            int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 128;
-            
-            // Responde com o código de saída
-            char resp[16];
-            snprintf(resp, sizeof(resp), "%d", exit_code);
-            write(client_fd, resp, strlen(resp));
-        }
+            perror("execl");
+            exit(127);
+        } 
     }
 }
 
 int main() {
-    // 1. Bloquear sinais padrão
     signal(SIGINT, SIG_IGN);
     signal(SIGTERM, handle_sigterm);
     
-    // 2. Configurar Socket
-    unlink(SOCKET_PATH);
-    int server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    struct sockaddr_un addr = {0};
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path)-1);
+    wait_and_configure_network();
 
-    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
-        perror("init: bind socket failed");
-        exit(1);
-    }
-    listen(server_fd, MAX_CLIENTS);
+    // REUTILIZAÇÃO: Cria o servidor usando a função do ipc.c
+    int server_fd = ipc_create_server(GUEST_SOCK_PATH, MAX_CLIENTS);
+    if (server_fd < 0) exit(1);
 
-    // 3. Loop Principal
     while (keep_running) {
         reap_zombies();
 
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(server_fd, &readfds);
-
-        // Timeout para garantir que reap_zombies rode periodicamente
         struct timeval tv = {1, 0}; 
 
         int activity = select(server_fd + 1, &readfds, NULL, NULL, &tv);
@@ -100,13 +123,11 @@ int main() {
         }
     }
 
-    // 4. Shutdown Graceful
-    printf("Init: shutting down...\n");
     close(server_fd);
-    unlink(SOCKET_PATH);
+    unlink(GUEST_SOCK_PATH);
     
     kill(-1, SIGTERM);
-    sleep(2);
+    sleep(1);
     kill(-1, SIGKILL);
     
     return 0;

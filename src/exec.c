@@ -1,6 +1,4 @@
 #include "common.h"
-#include <sys/socket.h>
-#include <sys/un.h>
 
 int cmd_exec(int argc, char **argv) {
     if (argc < 3) {
@@ -13,36 +11,42 @@ int cmd_exec(int argc, char **argv) {
         return 1;
     }
 
-    // Monta string de comando
-    char full_cmd[1024] = "EXEC ";
-    for (int i = 2; i < argc; i++) {
-        strcat(full_cmd, argv[i]);
-        strcat(full_cmd, " ");
+    // Constrói o comando
+    char full_cmd[4096] = "EXEC ";
+    size_t len = 5;
+    for (int i = 2; i < argc && len < sizeof(full_cmd) - 2; i++) {
+        size_t arg_len = strlen(argv[i]);
+        if (len + arg_len + 1 >= sizeof(full_cmd)) {
+            log_error("Comando muito longo.");
+            return 1;
+        }
+        memcpy(full_cmd + len, argv[i], arg_len);
+        len += arg_len;
+        full_cmd[len++] = ' ';
     }
+    full_cmd[len - 1] = '\0';
 
-    // Conecta no Socket
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    struct sockaddr_un addr = {0};
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, SOCK_FILE, sizeof(addr.sun_path)-1);
-
-    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
-        perror("Falha ao conectar no container");
+    // REUTILIZAÇÃO: Conecta usando a função do ipc.c
+    int fd = ipc_connect_client(SOCK_FILE);
+    if (fd < 0) {
+        perror("Falha ao conectar no container (verifique se ele está rodando)");
         return 1;
     }
 
-    // Envia e Espera
-    write(fd, full_cmd, strlen(full_cmd));
-    
-    char buf[16];
-    int len = read(fd, buf, sizeof(buf)-1);
-    close(fd);
-
-    if (len > 0) {
-        buf[len] = '\0';
-        int exit_code = atoi(buf);
-        return exit_code;
+    // Envia comando
+    if (write(fd, full_cmd, strlen(full_cmd)) == -1) {
+        perror("Falha ao enviar comando");
+        close(fd);
+        return 1;
     }
 
-    return 1;
+    // Loop de leitura (streaming)
+    char buf[4096];
+    ssize_t n;
+    while ((n = read(fd, buf, sizeof(buf))) > 0) {
+        if (write(STDOUT_FILENO, buf, n) == -1) break;
+    }
+
+    close(fd);
+    return 0;
 }

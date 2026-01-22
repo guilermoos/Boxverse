@@ -1,6 +1,5 @@
 #include "common.h"
-#include <sys/socket.h>
-#include <sys/un.h>
+#include <sys/wait.h>
 
 int cmd_end(int argc, char **argv) {
     (void)argc; (void)argv;
@@ -12,20 +11,17 @@ int cmd_end(int argc, char **argv) {
 
     log_info("Enviando sinal de desligamento...");
 
-    // Tenta conectar via Socket
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    struct sockaddr_un addr = {0};
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, SOCK_FILE, sizeof(addr.sun_path)-1);
-
-    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
-        // Conexão socket bem sucedida
+    // REUTILIZAÇÃO: Tenta conectar graciosamente
+    int fd = ipc_connect_client(SOCK_FILE);
+    
+    if (fd >= 0) {
+        // Se conectou, envia comando SHUTDOWN
         write(fd, CMD_SHUTDOWN, strlen(CMD_SHUTDOWN));
         char buf[16];
-        read(fd, buf, sizeof(buf)); // Wait OK
+        read(fd, buf, sizeof(buf)); // Aguarda ACK
         close(fd);
     } else {
-        // Fallback: SIGTERM no PID
+        // Fallback se o socket não responder
         int pid = get_box_pid();
         if (pid > 0) {
             log_info("Socket indisponível. Usando SIGTERM no PID %d...", pid);
@@ -35,14 +31,18 @@ int cmd_end(int argc, char **argv) {
         }
     }
 
-    // Aguarda término (polling simples)
-    sleep(2);
-    
-    // Limpeza forçada se ainda existir (SIGKILL)
+    // Espera o processo morrer
     int pid = get_box_pid();
-    if (pid > 0 && kill(pid, 0) == 0) {
-        log_info("Container travado. Forçando SIGKILL...");
-        kill(pid, SIGKILL);
+    if (pid > 0) {
+        int status;
+        if (waitpid(pid, &status, WNOHANG) == 0) {
+            sleep(2);
+        }
+        if (kill(pid, 0) == 0) {
+            log_info("Container travado. Forçando SIGKILL...");
+            kill(pid, SIGKILL);
+            waitpid(pid, &status, 0);
+        }
     }
 
     cleanup_cgroup();

@@ -28,12 +28,20 @@ int write_file(const char *path, const char *content) {
 }
 
 char* read_file(const char *path) {
-    static char buf[256];
     FILE *f = fopen(path, "r");
     if (!f) return NULL;
-    if (!fgets(buf, sizeof(buf), f)) buf[0] = 0;
+    
+    // Aloca memória dinamicamente
+    char *buf = malloc(256);
+    if (!buf) { fclose(f); return NULL; }
+
+    if (!fgets(buf, 256, f)) {
+        free(buf);
+        fclose(f);
+        return NULL;
+    }
     fclose(f);
-    // Remove newline
+    
     buf[strcspn(buf, "\n")] = 0;
     return buf;
 }
@@ -41,7 +49,9 @@ char* read_file(const char *path) {
 int get_box_pid(void) {
     char *c = read_file(PID_FILE);
     if (!c) return -1;
-    return atoi(c);
+    int pid = atoi(c);
+    free(c);
+    return pid;
 }
 
 void set_state(BoxState state) {
@@ -55,10 +65,12 @@ void set_state(BoxState state) {
 BoxState get_state(void) {
     char *s = read_file(STATE_FILE);
     if (!s) return STATE_EMPTY;
-    if (strcmp(s, "INITIALIZED") == 0) return STATE_INITIALIZED;
-    if (strcmp(s, "RUNNING") == 0) return STATE_RUNNING;
-    if (strcmp(s, "STOPPED") == 0) return STATE_STOPPED;
-    return STATE_EMPTY;
+    BoxState state = STATE_EMPTY;
+    if (strcmp(s, "INITIALIZED") == 0) state = STATE_INITIALIZED;
+    else if (strcmp(s, "RUNNING") == 0) state = STATE_RUNNING;
+    else if (strcmp(s, "STOPPED") == 0) state = STATE_STOPPED;
+    free(s);
+    return state;
 }
 
 void save_config(Config *cfg) {
@@ -76,6 +88,7 @@ Config load_config(void) {
     if (!f) return cfg;
     char line[128];
     while (fgets(line, sizeof(line), f)) {
+        if (sscanf(line, "distro=\"%63[^\"]\"", cfg.distro) == 1) continue;
         if (strstr(line, "net=true")) cfg.net_enabled = true;
         if (strstr(line, "ssh=true")) cfg.ssh_enabled = true;
     }

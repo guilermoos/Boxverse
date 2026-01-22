@@ -2,7 +2,7 @@
 
 void usage() {
     printf("\n");
-    printf("  📦 \033[1mBoxverse Container Runtime\033[0m\n");
+    printf("   \033[1mBoxverse Container Runtime\033[0m\n");
     printf("  -------------------------------------------\n");
     printf("  Gerenciador de containers persistentes e minimalistas.\n");
     printf("\n");

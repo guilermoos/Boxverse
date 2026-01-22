@@ -23,11 +23,8 @@ static char* find_guest_init() {
         self_path[len] = '\0';
         char *dir = strrchr(self_path, '/');
         if (dir) {
-            *dir = '\0'; // Remove o nome do executável, mantém o diretório
+            *dir = '\0';
             
-            // CORREÇÃO DEFINITIVA DO WARNING:
-            // Trocamos snprintf por strcpy/strcat dentro de um check explícito.
-            // Isso satisfaz o compilador pois remove a heurística de formatação.
             size_t required_len = strlen(self_path) + strlen("/boxverse-init") + 1;
             
             if (required_len <= sizeof(path)) {
@@ -40,6 +37,37 @@ static char* find_guest_init() {
     }
 
     return NULL;
+}
+
+// Gera um sources.list completo para Ubuntu
+static void configure_ubuntu_sources(const char *distro) {
+    char path[256];
+    snprintf(path, sizeof(path), "%s/etc/apt/sources.list", ROOTFS_DIR);
+
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        log_error("Falha ao configurar sources.list: %s", strerror(errno));
+        return;
+    }
+
+    const char *archive_url = "http://archive.ubuntu.com/ubuntu/";
+    const char *security_url = "http://security.ubuntu.com/ubuntu/";
+    const char *components = "main restricted universe multiverse";
+
+    // 1. Release Principal
+    fprintf(f, "deb %s %s %s\n", archive_url, distro, components);
+    
+    // 2. Updates
+    fprintf(f, "deb %s %s-updates %s\n", archive_url, distro, components);
+    
+    // 3. Backports
+    fprintf(f, "deb %s %s-backports %s\n", archive_url, distro, components);
+    
+    // 4. Security
+    fprintf(f, "deb %s %s-security %s\n", security_url, distro, components);
+
+    fclose(f);
+    log_info("APT sources.list configurado com repositórios completos (Universe/Multiverse).");
 }
 
 int cmd_init(int argc, char **argv) {
@@ -77,7 +105,9 @@ int cmd_init(int argc, char **argv) {
     mkdir(ROOTFS_DIR, 0755);
 
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "debootstrap %s %s", distro, ROOTFS_DIR);
+    // Adicionamos --components para garantir que o debootstrap saiba o que baixar,
+    // mas sobrescreveremos o sources.list depois para garantir a lista completa.
+    snprintf(cmd, sizeof(cmd), "debootstrap --components=main,universe,multiverse %s %s", distro, ROOTFS_DIR);
     log_info("Executando debootstrap (isso pode demorar)...");
     
     if (system(cmd) != 0) {
@@ -85,6 +115,9 @@ int cmd_init(int argc, char **argv) {
         system("rm -rf .boxverse rootfs");
         return 1;
     }
+
+    // Configura os repositórios completos
+    configure_ubuntu_sources(distro);
 
     // Copia o binário encontrado para dentro do rootfs
     snprintf(cmd, sizeof(cmd), "cp %s %s/sbin/boxverse-init", guest_bin, ROOTFS_DIR);
