@@ -5,48 +5,51 @@ int cmd_end(int argc, char **argv) {
     (void)argc; (void)argv;
 
     if (get_state() != STATE_RUNNING) {
-        log_error("Container não está rodando.");
+        log_error("Container is not running.");
         return 0;
     }
 
-    log_info("Enviando sinal de desligamento...");
+    log_info("Sending shutdown signal...");
 
-    // REUTILIZAÇÃO: Tenta conectar graciosamente
+    // 1. Try IPC Soft Shutdown
     int fd = ipc_connect_client(SOCK_FILE);
-    
     if (fd >= 0) {
-        // Se conectou, envia comando SHUTDOWN
         write(fd, CMD_SHUTDOWN, strlen(CMD_SHUTDOWN));
         char buf[16];
-        read(fd, buf, sizeof(buf)); // Aguarda ACK
+        read(fd, buf, sizeof(buf)); // Wait for ACK
         close(fd);
     } else {
-        // Fallback se o socket não responder
+        // 2. Fallback: SIGTERM to Init
         int pid = get_box_pid();
         if (pid > 0) {
-            log_info("Socket indisponível. Usando SIGTERM no PID %d...", pid);
+            log_warn("Socket unreachable. Using SIGTERM on PID %d...", pid);
             kill(pid, SIGTERM);
-        } else {
-            log_error("Não foi possível encontrar o PID para encerrar.");
         }
     }
 
-    // Espera o processo morrer
+    // 3. Wait for process exit
     int pid = get_box_pid();
     if (pid > 0) {
         int status;
-        if (waitpid(pid, &status, WNOHANG) == 0) {
-            sleep(2);
+        int i = 0;
+        // Poll for 5 seconds
+        while (i < 50 && kill(pid, 0) == 0) {
+            usleep(100000);
+            waitpid(pid, &status, WNOHANG);
+            i++;
         }
+        
+        // Force kill if stuck
         if (kill(pid, 0) == 0) {
-            log_info("Container travado. Forçando SIGKILL...");
+            log_warn("Container stuck. Forcing SIGKILL...");
             kill(pid, SIGKILL);
             waitpid(pid, &status, 0);
         }
     }
 
     cleanup_cgroup();
+    cleanup_network();
     set_state(STATE_STOPPED);
-    log_info("Container parado.");
+    log_info("Container stopped.");
     return 0;
 }

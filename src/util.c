@@ -1,19 +1,27 @@
 #include "common.h"
-#include <stdarg.h>
 
 void log_info(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    printf("[BOX] ");
+    printf("\033[32m[INFO]\033[0m ");
     vprintf(fmt, args);
     printf("\n");
+    va_end(args);
+}
+
+void log_warn(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    fprintf(stderr, "\033[33m[WARN]\033[0m ");
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, "\n");
     va_end(args);
 }
 
 void log_error(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    fprintf(stderr, "[ERR] ");
+    fprintf(stderr, "\033[31m[ERROR]\033[0m ");
     vfprintf(stderr, fmt, args);
     fprintf(stderr, "\n");
     va_end(args);
@@ -31,7 +39,6 @@ char* read_file(const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) return NULL;
     
-    // Aloca memória dinamicamente
     char *buf = malloc(256);
     if (!buf) { fclose(f); return NULL; }
 
@@ -41,8 +48,7 @@ char* read_file(const char *path) {
         return NULL;
     }
     fclose(f);
-    
-    buf[strcspn(buf, "\n")] = 0;
+    buf[strcspn(buf, "\n")] = 0; // Strip newline
     return buf;
 }
 
@@ -55,7 +61,7 @@ int get_box_pid(void) {
 }
 
 void set_state(BoxState state) {
-    char *s_str = "EMPTY";
+    const char *s_str = "EMPTY";
     if (state == STATE_INITIALIZED) s_str = "INITIALIZED";
     if (state == STATE_RUNNING) s_str = "RUNNING";
     if (state == STATE_STOPPED) s_str = "STOPPED";
@@ -99,7 +105,7 @@ Config load_config(void) {
 int acquire_lock(void) {
     int fd = open(LOCK_FILE, O_CREAT | O_RDWR, 0644);
     if (lockf(fd, F_TLOCK, 0) < 0) {
-        log_error("Falha no lock. Outro processo boxverse está rodando?");
+        log_error("Could not acquire lock. Is another instance running?");
         close(fd);
         return -1;
     }

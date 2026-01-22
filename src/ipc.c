@@ -1,11 +1,8 @@
 #include "common.h"
 
-// Cria um cliente e conecta ao socket especificado
 int ipc_connect_client(const char *socket_path) {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd == -1) {
-        return -1;
-    }
+    if (fd == -1) return -1;
 
     struct sockaddr_un addr = {0};
     addr.sun_family = AF_UNIX;
@@ -15,18 +12,16 @@ int ipc_connect_client(const char *socket_path) {
         close(fd);
         return -1;
     }
-
     return fd;
 }
 
-// Cria um servidor, faz bind e listen
 int ipc_create_server(const char *socket_path, int max_clients) {
-    // Garante que o arquivo do socket não exista antes de criar
+    // Unlink old socket
     unlink(socket_path);
 
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd == -1) {
-        perror("ipc: socket failed");
+        perror("ipc: socket creation failed");
         return -1;
     }
 

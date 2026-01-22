@@ -2,45 +2,46 @@
 
 int cmd_exec(int argc, char **argv) {
     if (argc < 3) {
-        log_error("Uso: boxverse exec <comando...>");
+        log_error("Usage: boxverse exec <cmd...>");
         return 1;
     }
 
     if (get_state() != STATE_RUNNING) {
-        log_error("Container não está rodando.");
+        log_error("Container is not running.");
         return 1;
     }
 
-    // Constrói o comando
-    char full_cmd[4096] = "EXEC ";
-    size_t len = 5;
-    for (int i = 2; i < argc && len < sizeof(full_cmd) - 2; i++) {
+    // Construct full command string safely
+    char full_cmd[4096] = CMD_EXEC;
+    strcat(full_cmd, " "); // Add space separator
+    
+    size_t current_len = strlen(full_cmd);
+    
+    for (int i = 2; i < argc; i++) {
         size_t arg_len = strlen(argv[i]);
-        if (len + arg_len + 1 >= sizeof(full_cmd)) {
-            log_error("Comando muito longo.");
+        if (current_len + arg_len + 1 >= sizeof(full_cmd)) {
+            log_error("Command string too long.");
             return 1;
         }
-        memcpy(full_cmd + len, argv[i], arg_len);
-        len += arg_len;
-        full_cmd[len++] = ' ';
+        strcat(full_cmd, argv[i]);
+        if (i < argc - 1) strcat(full_cmd, " ");
+        current_len += arg_len + 1;
     }
-    full_cmd[len - 1] = '\0';
 
-    // REUTILIZAÇÃO: Conecta usando a função do ipc.c
     int fd = ipc_connect_client(SOCK_FILE);
     if (fd < 0) {
-        perror("Falha ao conectar no container (verifique se ele está rodando)");
+        log_error("Failed to connect to container daemon. Is init running?");
         return 1;
     }
 
-    // Envia comando
+    // Send command
     if (write(fd, full_cmd, strlen(full_cmd)) == -1) {
-        perror("Falha ao enviar comando");
+        perror("Socket write error");
         close(fd);
         return 1;
     }
 
-    // Loop de leitura (streaming)
+    // Read stream output from container
     char buf[4096];
     ssize_t n;
     while ((n = read(fd, buf, sizeof(buf))) > 0) {

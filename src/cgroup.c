@@ -1,18 +1,32 @@
-// src/cgroup.c
 #include "common.h"
 
+#define CGROUP_PATH "/sys/fs/cgroup/boxverse"
+
 int setup_cgroup(pid_t pid) {
-    // Cgroup V2
-    mkdir("/sys/fs/cgroup/boxverse", 0755);
-    char path[128];
-    snprintf(path, sizeof(path), "/sys/fs/cgroup/boxverse/cgroup.procs");
+    if (mkdir(CGROUP_PATH, 0755) != 0 && errno != EEXIST) {
+        perror("mkdir cgroup");
+        return 1;
+    }
+
+    char path[256];
     
-    char pid_str[16];
-    sprintf(pid_str, "%d", pid);
+    // Add PID to cgroup
+    snprintf(path, sizeof(path), "%s/cgroup.procs", CGROUP_PATH);
+    char pid_str[32];
+    snprintf(pid_str, sizeof(pid_str), "%d", pid);
     
-    return write_file(path, pid_str);
+    if (write_file(path, pid_str) != 0) {
+        log_error("Failed to write PID to cgroup.");
+        return 1;
+    }
+
+    return 0;
 }
 
 int cleanup_cgroup(void) {
-    return rmdir("/sys/fs/cgroup/boxverse");
+    if (rmdir(CGROUP_PATH) != 0 && errno != ENOENT) {
+        // It's common to fail if tasks are still cleaning up
+        return 1; 
+    }
+    return 0;
 }
